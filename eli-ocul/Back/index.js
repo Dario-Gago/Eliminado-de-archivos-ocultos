@@ -11,6 +11,9 @@ const PORT = 3001
 app.use(cors())
 app.use(express.json())
 
+// Variable global para almacenar el nombre de la carpeta
+let currentFolderName = 'archivos'
+
 // Almacenamiento temporal en carpeta uploads con rutas relativas
 const storage = multer.diskStorage({
   destination: function (req, file, cb) {
@@ -133,6 +136,11 @@ app.post('/scan', upload.any(), (req, res) => {
   try {
     const uploadsDir = path.join(__dirname, 'uploads')
 
+    // Guardar el nombre de la carpeta enviado desde el frontend
+    if (req.body.folderName) {
+      currentFolderName = req.body.folderName
+    }
+
     // Escanear todos los archivos
     const scanResults = scanDirectory(uploadsDir)
 
@@ -149,7 +157,8 @@ app.post('/scan', upload.any(), (req, res) => {
         total: totalCount,
         hidden: hiddenCount,
         clean: totalCount - hiddenCount
-      }
+      },
+      folderName: currentFolderName
     })
   } catch (error) {
     console.error('Error durante el escaneo:', error)
@@ -226,6 +235,10 @@ app.get('/download-clean', (req, res) => {
   try {
     const uploadsDir = path.join(__dirname, 'uploads')
 
+    // Obtener el nombre de la carpeta desde los parámetros query o usar el almacenado
+    const folderName = req.query.folderName || currentFolderName || 'archivos'
+    const zipFileName = `${folderName}-limpio.zip`
+
     // Verificar si existe el directorio
     if (!fs.existsSync(uploadsDir)) {
       return res.status(404).json({
@@ -238,7 +251,7 @@ app.get('/download-clean', (req, res) => {
     res.setHeader('Content-Type', 'application/zip')
     res.setHeader(
       'Content-Disposition',
-      'attachment; filename="archivos-limpios.zip"'
+      `attachment; filename="${zipFileName}"`
     )
 
     // Crear archivo ZIP
@@ -275,6 +288,7 @@ app.get('/download-clean', (req, res) => {
         } else {
           // Solo agregar archivos no ocultos
           if (!isHiddenFile(item.name, relativePath)) {
+            // Mantener la estructura de carpetas en el ZIP
             archive.file(fullPath, { name: relativePath })
           }
         }
@@ -285,6 +299,8 @@ app.get('/download-clean', (req, res) => {
 
     // Finalizar el archivo
     archive.finalize()
+
+    console.log(`📦 Generando ZIP: ${zipFileName}`)
   } catch (error) {
     console.error('Error en descarga:', error)
     res.status(500).json({
@@ -308,7 +324,8 @@ app.get('/stats', (req, res) => {
           hidden: 0,
           clean: 0,
           totalSize: 0
-        }
+        },
+        folderName: currentFolderName
       })
     }
 
@@ -333,7 +350,8 @@ app.get('/stats', (req, res) => {
         totalSize,
         hiddenSize: hiddenFiles.reduce((sum, result) => sum + result.size, 0),
         cleanSize: cleanFiles.reduce((sum, result) => sum + result.size, 0)
-      }
+      },
+      folderName: currentFolderName
     })
   } catch (error) {
     console.error('Error obteniendo estadísticas:', error)
@@ -349,6 +367,7 @@ app.get('/stats', (req, res) => {
 app.post('/clear', (req, res) => {
   try {
     clearUploads()
+    currentFolderName = 'archivos' // Resetear el nombre de carpeta
     res.json({
       success: true,
       message: 'Directorio temporal limpiado exitosamente'

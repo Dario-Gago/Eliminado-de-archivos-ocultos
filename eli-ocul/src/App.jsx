@@ -17,6 +17,7 @@ import {
   Eye,
   EyeOff
 } from 'lucide-react'
+import Swal from 'sweetalert2'
 
 function App() {
   const [selectedFiles, setSelectedFiles] = useState([])
@@ -24,6 +25,7 @@ function App() {
   const [showResults, setShowResults] = useState(false)
   const [isScanning, setIsScanning] = useState(false)
   const [hiddenFilesCount, setHiddenFilesCount] = useState(0)
+  const [folderName, setFolderName] = useState('') // Nuevo estado para el nombre de la carpeta
   const fileInputRef = useRef()
 
   const handleFileChange = (event) => {
@@ -31,6 +33,14 @@ function App() {
     setSelectedFiles(filesArray)
     setShowResults(false)
     setScanResults({})
+
+    // Extraer el nombre de la carpeta del primer archivo
+    if (filesArray.length > 0 && filesArray[0].webkitRelativePath) {
+      const pathParts = filesArray[0].webkitRelativePath.split('/')
+      setFolderName(pathParts[0]) // Tomar el primer segmento como nombre de carpeta
+    } else {
+      setFolderName('archivos')
+    }
   }
 
   // Función para detectar archivos ocultos
@@ -93,6 +103,9 @@ function App() {
       formData.append('files', file, file.webkitRelativePath || file.name)
     })
 
+    // Agregar el nombre de la carpeta al FormData
+    formData.append('folderName', folderName)
+
     try {
       const response = await fetch('http://localhost:3001/scan', {
         method: 'POST',
@@ -105,12 +118,52 @@ function App() {
         setScanResults(data.results)
         setHiddenFilesCount(data.summary.hidden)
         setShowResults(true)
+
+        // Mostrar resultados del escaneo
+        const hiddenCount = data.summary.hidden
+        const cleanCount = data.summary.clean
+
+        if (hiddenCount > 0) {
+          Swal.fire({
+            title: '🔍 Escaneo Completado',
+            html: `
+              <div class="text-left">
+                <p class="mb-2"><strong>📊 Resultados:</strong></p>
+                <p class="text-green-600">✅ Archivos limpios: <strong>${cleanCount}</strong></p>
+                <p class="text-yellow-600">⚠️ Archivos ocultos: <strong>${hiddenCount}</strong></p>
+              </div>
+            `,
+            icon: 'warning',
+            confirmButtonText: 'Entendido',
+            confirmButtonColor: '#f59e0b'
+          })
+        } else {
+          Swal.fire({
+            title: '🎉 ¡Carpeta Limpia!',
+            text: `No se encontraron archivos ocultos. Tu carpeta está perfectamente limpia con ${cleanCount} archivos.`,
+            icon: 'success',
+            confirmButtonText: 'Excelente',
+            confirmButtonColor: '#10b981'
+          })
+        }
       } else {
-        alert('Error durante el escaneo: ' + data.message)
+        Swal.fire({
+          title: '❌ Error en el Escaneo',
+          text: data.message,
+          icon: 'error',
+          confirmButtonText: 'Intentar de nuevo',
+          confirmButtonColor: '#ef4444'
+        })
       }
     } catch (error) {
       console.error('Error al escanear:', error)
-      alert('Error de conexión con el servidor')
+      Swal.fire({
+        title: '🚫 Error de Conexión',
+        text: 'No se pudo conectar con el servidor. Verifica que esté ejecutándose.',
+        icon: 'error',
+        confirmButtonText: 'Entendido',
+        confirmButtonColor: '#ef4444'
+      })
     } finally {
       setIsScanning(false)
     }
@@ -118,15 +171,46 @@ function App() {
 
   const handleDeleteHidden = async () => {
     if (hiddenFilesCount === 0) {
-      alert('No se encontraron archivos ocultos para eliminar.')
+      Swal.fire({
+        title: '📭 Sin Archivos Ocultos',
+        text: 'No se encontraron archivos ocultos para eliminar.',
+        icon: 'info',
+        confirmButtonText: 'Entendido',
+        confirmButtonColor: '#6b7280'
+      })
       return
     }
 
-    const confirmDelete = window.confirm(
-      `¿Estás seguro de que quieres eliminar ${hiddenFilesCount} archivo(s) oculto(s)? Esta acción no se puede deshacer.`
-    )
+    const result = await Swal.fire({
+      title: '⚠️ ¿Confirmar Eliminación?',
+      html: `
+        <div class="text-left">
+          <p class="mb-3">Estás a punto de eliminar <strong class="text-red-600">${hiddenFilesCount} archivo(s) oculto(s)</strong></p>
+          <p class="text-sm text-gray-600">⚠️ <strong>Esta acción no se puede deshacer</strong></p>
+        </div>
+      `,
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonColor: '#dc2626',
+      cancelButtonColor: '#6b7280',
+      confirmButtonText: '🗑️ Sí, eliminar',
+      cancelButtonText: '❌ Cancelar',
+      reverseButtons: true
+    })
 
-    if (confirmDelete) {
+    if (result.isConfirmed) {
+      // Mostrar loading
+      Swal.fire({
+        title: '🗑️ Eliminando Archivos...',
+        text: 'Por favor espera mientras se eliminan los archivos ocultos.',
+        allowOutsideClick: false,
+        allowEscapeKey: false,
+        showConfirmButton: false,
+        didOpen: () => {
+          Swal.showLoading()
+        }
+      })
+
       try {
         const response = await fetch('http://localhost:3001/delete-hidden', {
           method: 'POST'
@@ -135,47 +219,116 @@ function App() {
         const data = await response.json()
 
         if (data.success) {
-          alert(data.message)
+          Swal.fire({
+            title: '✅ ¡Eliminación Exitosa!',
+            html: `
+              <div class="text-left">
+                <p class="mb-2">${data.message}</p>
+                <p class="text-sm text-gray-600">Los archivos han sido eliminados permanentemente.</p>
+              </div>
+            `,
+            icon: 'success',
+            confirmButtonText: 'Perfecto',
+            confirmButtonColor: '#10b981'
+          })
           // Volver a escanear para actualizar resultados
           handleScan()
         } else {
-          alert('Error eliminando archivos: ' + data.message)
+          Swal.fire({
+            title: '❌ Error al Eliminar',
+            text: data.message,
+            icon: 'error',
+            confirmButtonText: 'Intentar de nuevo',
+            confirmButtonColor: '#ef4444'
+          })
         }
       } catch (error) {
         console.error('Error eliminando archivos:', error)
-        alert('Error de conexión con el servidor')
+        Swal.fire({
+          title: '🚫 Error de Conexión',
+          text: 'No se pudo conectar con el servidor para eliminar los archivos.',
+          icon: 'error',
+          confirmButtonText: 'Entendido',
+          confirmButtonColor: '#ef4444'
+        })
       }
     }
   }
 
   const handleDownloadClean = async () => {
     if (selectedFiles.length === 0) {
-      alert('No hay archivos seleccionados para descargar.')
+      Swal.fire({
+        title: '📂 Sin Archivos',
+        text: 'No hay archivos seleccionados para descargar.',
+        icon: 'info',
+        confirmButtonText: 'Entendido',
+        confirmButtonColor: '#6b7280'
+      })
       return
     }
 
+    // Mostrar loading
+    Swal.fire({
+      title: '📦 Preparando Descarga...',
+      text: 'Generando archivo ZIP con los archivos limpios.',
+      allowOutsideClick: false,
+      allowEscapeKey: false,
+      showConfirmButton: false,
+      didOpen: () => {
+        Swal.showLoading()
+      }
+    })
+
     try {
-      const response = await fetch('http://localhost:3001/download-clean')
+      // Pasar el nombre de la carpeta como parámetro de consulta
+      const response = await fetch(
+        `http://localhost:3001/download-clean?folderName=${encodeURIComponent(
+          folderName
+        )}`
+      )
 
       if (response.ok) {
         const blob = await response.blob()
         const url = URL.createObjectURL(blob)
         const a = document.createElement('a')
         a.href = url
-        a.download = 'archivos-limpios.zip'
+        a.download = `${folderName}-limpio.zip` // Usar el nombre de la carpeta
         document.body.appendChild(a)
         a.click()
         document.body.removeChild(a)
         URL.revokeObjectURL(url)
 
-        alert('Descarga iniciada: archivos-limpios.zip')
+        Swal.fire({
+          title: '🎉 ¡Descarga Iniciada!',
+          html: `
+            <div class="text-left">
+              <p class="mb-2">Tu archivo <strong>${folderName}-limpio.zip</strong> se está descargando.</p>
+              <p class="text-sm text-green-600">✅ Solo contiene archivos limpios sin elementos ocultos.</p>
+            </div>
+          `,
+          icon: 'success',
+          confirmButtonText: 'Excelente',
+          confirmButtonColor: '#10b981'
+        })
       } else {
         const errorData = await response.json()
-        alert('Error en la descarga: ' + errorData.message)
+        Swal.fire({
+          title: '❌ Error en la Descarga',
+          text: errorData.message,
+          icon: 'error',
+          confirmButtonText: 'Intentar de nuevo',
+          confirmButtonColor: '#ef4444'
+        })
       }
     } catch (error) {
       console.error('Error descargando archivos:', error)
-      alert('Error de conexión con el servidor')
+      Swal.fire({
+        title: '🚫 Error de Conexión',
+        text: 'No se pudo conectar con el servidor para descargar los archivos.',
+        icon: 'error',
+        confirmButtonText: 'Entendido',
+        confirmButtonColor: '#ef4444'
+      })
     }
   }
 
@@ -256,6 +409,11 @@ function App() {
                 <h2 className="font-bold text-xl flex items-center gap-2">
                   <Folder className="w-6 h-6 text-blue-600" />
                   Archivos Seleccionados
+                  {folderName && (
+                    <span className="text-sm font-normal text-gray-600 bg-blue-100 px-3 py-1 rounded-full">
+                      📁 {folderName}
+                    </span>
+                  )}
                 </h2>
                 <div className="text-sm text-gray-600 bg-gray-100 px-3 py-1 rounded-full">
                   {selectedFiles.length} archivo(s)
